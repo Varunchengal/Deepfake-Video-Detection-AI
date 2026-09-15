@@ -9,11 +9,11 @@ import os
 
 print("--- Deepfake Detection Model Training Started ---")
 
-# 1. ഡാറ്റാസെറ്റ് ഇമേജുകൾ പ്രോസസ്സ് ചെയ്യാനുള്ള ക്രമീകരണങ്ങൾ (Data Augmentation & Normalization)
+# 1. Data Augmentation & Normalization
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.RandomHorizontalFlip(), # ചിത്രങ്ങൾ തിരിച്ചും മറിച്ചും പഠിക്കാൻ
+        transforms.RandomHorizontalFlip(), # analyse image in flip mode
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -24,7 +24,7 @@ data_transforms = {
     ]),
 }
 
-# 2. നിങ്ങൾ അറേഞ്ച് ചെയ്ത 'dataset' ഫോൾഡറിൽ നിന്ന് ചിത്രങ്ങൾ ലോഡ് ചെയ്യുന്നു
+# 2. load photos from dataset
 data_dir = 'dataset'
 
 try:
@@ -46,15 +46,15 @@ except Exception as e:
     print(f"Error Details: {e}")
     exit()
 
-# 3. Pre-trained ResNet18 മോഡൽ ലോഡ് ചെയ്യുന്നു (Transfer Learning)
+# 3. Load Pre-trained ResNet18 (Transfer Learning)
 weights = models.ResNet18_Weights.DEFAULT
 model = models.resnet18(weights=weights)
 
-# ആദ്യത്തെ ലെയറുകൾ ഫ്രീസ് ചെയ്യുന്നു
+# Freez first layer
 for param in model.parameters():
     param.requires_grad = False
 
-# അവസാനത്തെ ലെയർ നമ്മുടെ 2 ക്ലാസ്സുകൾക്ക് (fake / real) അനുസരിച്ച് മാറ്റുന്നു
+# last layer changes in real/fake classification
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 2)
 
@@ -62,7 +62,7 @@ model.fc = nn.Linear(num_ftrs, 2)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.fc.parameters(), lr=0.001)
 
-# 4. മോഡൽ ട്രെയിൻ ചെയ്യുന്ന ഭാഗം (3 Epochs മാത്രം - വേഗത്തിൽ കഴിയാൻ)
+# 4. Model training (3 Epochs only)
 num_epochs = 3
 print("\nTraining in progress... (ഇതിന് കുറച്ചു സമയം എടുക്കും, ദയവായി കാത്തിരിക്കുക)")
 
@@ -99,7 +99,7 @@ for epoch in range(num_epochs):
         
         print(f"{phase.upper()} -> Loss: {epoch_loss:.4f} | Accuracy: {epoch_acc:.4f} ({int(epoch_acc*100)}%)")
 
-# 5. ട്രെയിൻ ചെയ്ത മോഡൽ സേവ് ചെയ്യുന്നു
+# 5. Saving trained model
 os.makedirs("models", exist_ok=True)
 model_path = os.path.join("models", "deepfake_model.pth")
 torch.save(model.state_dict(), model_path)

@@ -93,14 +93,14 @@ if uploaded_video is not None:
     frame_count, faces_found = 0, 0
     predictions = []
     
-    # 4 കോളമുകളുള്ള ലേഔട്ട് (മൊബൈലിലും റെസ്പോൺസീവ് ആയിരിക്കും)
+    # 4 Make responsive
     cols = st.columns(4)
     
     # --- Loading Progress Bar Configuration ---
     progress_bar = st.progress(0)
     status_text = st.empty()
-    total_target_frames = 8  # നമ്മൾ അനലൈസ് ചെയ്യാൻ ഉദ്ദേശിക്കുന്ന ഫ്രെയിമുകളുടെ എണ്ണം
-    # ----------------------------------------
+    total_target_frames = 8  # Number of frames for analyse
+        # ----------------------------------------
     
     while cap.isOpened():
         ret, frame = cap.read()
@@ -126,7 +126,7 @@ if uploaded_video is not None:
                 
             predictions.append(adjusted_fake_score)
             
-            # ചിത്രങ്ങൾ റെസ്പോൺസീവ് ആയി കാണിക്കുന്നു
+            # show images in responsive mode
             with cols[faces_found % 4]:
                 st.image(cropped_face, caption=f"Frame {faces_found+1}", use_container_width=True)
             
@@ -146,10 +146,9 @@ if uploaded_video is not None:
     cap.release()
     
     if faces_found > 0:
-        # പ്രോസസ്സിങ് കഴിഞ്ഞാൽ ലോഡിങ് ബാർ 100% ആക്കി മാറ്റുന്നു
         progress_bar.progress(100)
         status_text.success("✅ Frame Extraction & AI Analysis Completed 100%!")
-        time.sleep(1) # ചെറിയൊരു സ്മൂത്ത് ഫീൽ കിട്ടാൻ
+        time.sleep(1) 
         
         avg_fake_score = np.mean(predictions)
         
