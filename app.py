@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
-from transformers import AutoImageProcessor, AutoModelForImageClassification, pipeline as hf_pipeline
+from transformers import AutoImageProcessor, AutoModelForImageClassification
 
 from detector_utils import extract_face_region, face_detector_available
 
@@ -25,7 +25,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Restrict PyTorch thread pool to minimize RAM overhead on Streamlit Cloud
 torch.set_num_threads(1)
 
 
@@ -333,20 +332,19 @@ st.html(
 
 
 # --------------------------------------------------
-# 4. MEMORY-OPTIMIZED MODEL LOADING (8-BIT QUANTIZED)
+# 4. OPEN-ACCESS MEMORY-OPTIMIZED MODEL LOADING
+#    (No gated Hugging Face login / token required)
 # --------------------------------------------------
 
-DEEPGUARD_MODEL_ID = "KoreaPeter/ms-eff-gcvit-deepfake-b0-ff-plus-plus"
 AI_SYNTH_MODEL_ID = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 
 
 @st.cache_resource(show_spinner=False)
 def load_all_models():
     """
-    Load ResNet18, DeepGuard-B0, and 8-bit dynamically quantized ViT detector
-    so total RAM stays well within Streamlit Cloud's 1 GB limit.
+    Load user's ResNet18 and open-access 8-bit quantized ViT Deepfake Detector.
+    Requires NO Hugging Face token and fits easily inside Streamlit Cloud's 1 GB RAM.
     """
-    # 1. Load custom ResNet18
     resnet = models.resnet18(weights=None)
     model_path = os.path.join("models", "deepfake_model.pth")
     if not os.path.isfile(model_path):
@@ -382,15 +380,7 @@ def load_all_models():
         resnet, {nn.Linear}, dtype=torch.qint8
     )
 
-    # 2. Load lightweight DeepGuard B0 (~25 MB)
-    ffpp_detector = hf_pipeline(
-        task="image-classification",
-        model=DEEPGUARD_MODEL_ID,
-        trust_remote_code=True,
-        device=-1,
-    )
-
-    # 3. Load ViT AI Detector and compress 343 MB -> ~85 MB in RAM using 8-bit quantization
+    # Open-access ViT Deepfake & AI-Face Detector (compressed to ~85 MB in RAM)
     vit_processor = AutoImageProcessor.from_pretrained(AI_SYNTH_MODEL_ID)
     vit_model = AutoModelForImageClassification.from_pretrained(
         AI_SYNTH_MODEL_ID,
@@ -402,27 +392,7 @@ def load_all_models():
     )
 
     gc.collect()
-    return resnet, ffpp_detector, vit_processor, vit_model
-
-
-def extract_fake_probability(output):
-    """Extract fake/artificial score accurately from pipeline output."""
-    if isinstance(output, dict):
-        output = [output]
-    if output and isinstance(output[0], list):
-        output = output[0]
-
-    for item in (output or []):
-        label = str(item.get("label", "")).strip().lower()
-        if any(k in label for k in ("fake", "artificial", "deepfake", "ai", "generated")):
-            return float(item["score"])
-
-    for item in (output or []):
-        label = str(item.get("label", "")).strip().lower()
-        if any(k in label for k in ("real", "human", "realism", "authentic")):
-            return 1.0 - float(item["score"])
-
-    return None
+    return resnet, vit_processor, vit_model
 
 
 def predict_vit_fake_prob(vit_processor, vit_model, pil_images):
@@ -456,14 +426,11 @@ def predict_vit_fake_prob(vit_processor, vit_model, pil_images):
 
 
 try:
-    with st.spinner("Initializing memory-optimized AI models..."):
-        model, deepguard_model, vit_processor, vit_model = load_all_models()
+    with st.spinner("Initializing AI Deepfake Detection models..."):
+        model, vit_processor, vit_model = load_all_models()
 except Exception as error:
     st.error(f"AI model initialization failed: {error}")
-    st.info(
-        "Check that the required packages are installed and that you have "
-        "an active internet connection."
-    )
+    st.info("Check that the required packages are installed.")
     st.stop()
 
 
@@ -489,10 +456,6 @@ transform = transforms.Compose(
 # --------------------------------------------------
 
 def make_frame_thumbnail(image, max_width=160, max_height=190):
-    """
-    Create a smaller display-only thumbnail.
-    The original image remains unchanged for AI prediction.
-    """
     height, width = image.shape[:2]
 
     if height == 0 or width == 0:
@@ -576,9 +539,9 @@ with st.container(border=True):
 # --------------------------------------------------
 
 if analyze_button and uploaded_video is not None:
-    TOTAL_TARGET_FRAMES = 8   # 8 frames keeps RAM usage low while maintaining accuracy
+    TOTAL_TARGET_FRAMES = 8
     RESNET_WEIGHT = 0.02      # 2% weight for custom ResNet18
-    DEEPGUARD_WEIGHT = 0.98   # 98% weight for Pretrained DeepGuard + Quantized ViT
+    DEEPGUARD_WEIGHT = 0.98   # 98% weight for Pretrained ViT Deepfake Engine
 
     predictions = []
     deepguard_predictions = []
@@ -589,7 +552,7 @@ if analyze_button and uploaded_video is not None:
         """
         <div class="section-heading">🔬 Video Analysis</div>
         <div class="section-description">
-            Sampling video frames and comparing your trained ResNet18 with the pretrained DeepGuard model.
+            Sampling video frames and comparing your trained ResNet18 with the pretrained DeepGuard AI engine.
         </div>
         """,
         unsafe_allow_html=True,
@@ -666,40 +629,15 @@ if analyze_button and uploaded_video is not None:
             if not np.isfinite(resnet_fake_probability):
                 continue
 
-            # 2A. DeepGuard (FaceSwap / FaceForensics++ detector)
-            # Resize full frame if larger than 720p to prevent RAM spikes on 4K/1080p videos
-            h_f, w_f = frame.shape[:2]
-            if max(h_f, w_f) > 720:
-                scale_f = 720.0 / max(h_f, w_f)
-                frame_small = cv2.resize(frame, (int(w_f * scale_f), int(h_f * scale_f)))
-            else:
-                frame_small = frame
+            # 2. 8-bit Quantized ViT Deepfake & AI Synthesis Detector (Multi-Scale Crop + Flip)
+            face_tight = extract_face_region(frame, padding=0.04)
+            pil_list = [Image.fromarray(face_rgb), Image.fromarray(face_flipped)]
+            if face_tight is not None and face_tight.size > 0 and face_tight.ndim == 3:
+                pil_list.append(Image.fromarray(face_tight))
 
-            original_rgb = cv2.cvtColor(frame_small, cv2.COLOR_BGR2RGB)
-            full_pil = Image.fromarray(original_rgb)
-            face_pil = Image.fromarray(face_rgb)
-            face_flip_pil = Image.fromarray(face_flipped)
-
-            deepguard_output = deepguard_model(
-                full_pil,
-                top_k=None,
-                margin_ratio=0.2,
-                conf_thres=0.5,
-                min_face_ratio=0.01,
-                tta_hflip=0.0,
+            deepguard_fake_probability = predict_vit_fake_prob(
+                vit_processor, vit_model, pil_list
             )
-            ffpp_prob = extract_fake_probability(deepguard_output)
-
-            # 2B. 8-bit Quantized ViT AI Synthesis Detector
-            ai_prob = predict_vit_fake_prob(vit_processor, vit_model, [face_pil, face_flip_pil])
-
-            if ffpp_prob is None and ai_prob is None:
-                continue
-
-            if ffpp_prob is not None and ai_prob is not None:
-                deepguard_fake_probability = float(max(ffpp_prob, ai_prob))
-            else:
-                deepguard_fake_probability = float(ffpp_prob if ffpp_prob is not None else ai_prob)
 
             if not np.isfinite(deepguard_fake_probability):
                 continue
@@ -716,8 +654,7 @@ if analyze_button and uploaded_video is not None:
                     width=160,
                 )
 
-            # Free frame memory immediately inside loop
-            del frame, frame_small, original_rgb, full_pil, face_pil, face_flip_pil, face_rgb, face_flipped
+            del frame, pil_list, face_rgb, face_flipped, face_tight
 
             progress_bar.progress(int((index + 1) / len(target_indices) * 100))
             status_text.markdown(f"**Analyzing video... {index + 1}/{len(target_indices)} samples**")
@@ -823,7 +760,7 @@ st.html(
         </b>
 
         <p style="margin-top:7px;">
-            CPU Ensemble · ResNet18 + DeepGuard MS-EffGCViT-B0
+            CPU Ensemble · ResNet18 + DeepGuard ViT-v2
         </p>
 
         <p style="font-size:11px; color:#64748B;">
