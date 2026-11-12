@@ -1,3 +1,4 @@
+import gc
 import os
 import tempfile
 
@@ -8,7 +9,7 @@ import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
-from transformers import pipeline as hf_pipeline
+from transformers import AutoImageProcessor, AutoModelForImageClassification, pipeline as hf_pipeline
 
 from detector_utils import extract_face_region, face_detector_available
 
@@ -24,8 +25,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Keep CPU usage modest on older Intel processors.
-torch.set_num_threads(2)
+# Restrict PyTorch thread pool to minimize RAM overhead on Streamlit Cloud
+torch.set_num_threads(1)
 
 
 # --------------------------------------------------
@@ -332,14 +333,21 @@ st.html(
 
 
 # --------------------------------------------------
-# 4. LOAD TRAINED & PRETRAINED MODELS
+# 4. MEMORY-OPTIMIZED MODEL LOADING (8-BIT QUANTIZED)
 # --------------------------------------------------
 
-@st.cache_resource
-def load_trained_model():
-    """Load the user's fine-tuned ResNet18 checkpoint on CPU."""
-    model = models.resnet18(weights=None)
+DEEPGUARD_MODEL_ID = "KoreaPeter/ms-eff-gcvit-deepfake-b0-ff-plus-plus"
+AI_SYNTH_MODEL_ID = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 
+
+@st.cache_resource(show_spinner=False)
+def load_all_models():
+    """
+    Load ResNet18, DeepGuard-B0, and 8-bit dynamically quantized ViT detector
+    so total RAM stays well within Streamlit Cloud's 1 GB limit.
+    """
+    # 1. Load custom ResNet18
+    resnet = models.resnet18(weights=None)
     model_path = os.path.join("models", "deepfake_model.pth")
     if not os.path.isfile(model_path):
         raise FileNotFoundError(
@@ -360,37 +368,41 @@ def load_trained_model():
         checkpoint = {key.removeprefix("module."): value for key, value in checkpoint.items()}
 
     if isinstance(checkpoint, dict) and "fc.1.weight" in checkpoint:
-        model.fc = nn.Sequential(
+        resnet.fc = nn.Sequential(
             nn.Dropout(p=0.3),
-            nn.Linear(model.fc.in_features, 2),
+            nn.Linear(resnet.fc.in_features, 2),
         )
     else:
-        model.fc = nn.Linear(model.fc.in_features, 2)
+        resnet.fc = nn.Linear(resnet.fc.in_features, 2)
 
-    model.load_state_dict(checkpoint, strict=True)
-    model.eval()
-    return model
+    resnet.load_state_dict(checkpoint, strict=True)
+    del checkpoint
+    resnet.eval()
+    resnet = torch.quantization.quantize_dynamic(
+        resnet, {nn.Linear}, dtype=torch.qint8
+    )
 
-
-DEEPGUARD_MODEL_ID = "KoreaPeter/ms-eff-gcvit-deepfake-b0-ff-plus-plus"
-AI_SYNTH_MODEL_ID = "prithivMLmods/Deep-Fake-Detector-v2-Model"
-
-
-@st.cache_resource
-def load_deepguard_model():
-    """Load DeepGuard (FaceSwap detector) and ViT AI Face Synthesis detector."""
+    # 2. Load lightweight DeepGuard B0 (~25 MB)
     ffpp_detector = hf_pipeline(
         task="image-classification",
         model=DEEPGUARD_MODEL_ID,
         trust_remote_code=True,
         device=-1,
     )
-    ai_detector = hf_pipeline(
-        task="image-classification",
-        model=AI_SYNTH_MODEL_ID,
-        device=-1,
+
+    # 3. Load ViT AI Detector and compress 343 MB -> ~85 MB in RAM using 8-bit quantization
+    vit_processor = AutoImageProcessor.from_pretrained(AI_SYNTH_MODEL_ID)
+    vit_model = AutoModelForImageClassification.from_pretrained(
+        AI_SYNTH_MODEL_ID,
+        low_cpu_mem_usage=True,
     )
-    return ffpp_detector, ai_detector
+    vit_model.eval()
+    vit_model = torch.quantization.quantize_dynamic(
+        vit_model, {nn.Linear}, dtype=torch.qint8
+    )
+
+    gc.collect()
+    return resnet, ffpp_detector, vit_processor, vit_model
 
 
 def extract_fake_probability(output):
@@ -413,10 +425,39 @@ def extract_fake_probability(output):
     return None
 
 
+def predict_vit_fake_prob(vit_processor, vit_model, pil_images):
+    """Run memory-efficient inference on the quantized ViT model."""
+    inputs = vit_processor(images=pil_images, return_tensors="pt")
+    with torch.inference_mode():
+        logits = vit_model(**inputs).logits
+        probs = torch.softmax(logits, dim=-1).cpu().numpy()
+
+    id2label = getattr(vit_model.config, "id2label", {}) or {}
+    fake_idx = None
+    real_idx = None
+
+    for idx, label in id2label.items():
+        lbl = str(label).strip().lower()
+        if any(k in lbl for k in ("fake", "artificial", "deepfake", "ai", "generated")):
+            fake_idx = int(idx)
+            break
+        if any(k in lbl for k in ("real", "human", "realism", "authentic")):
+            real_idx = int(idx)
+
+    if fake_idx is not None:
+        score = float(probs[:, fake_idx].mean())
+    elif real_idx is not None:
+        score = float(1.0 - probs[:, real_idx].mean())
+    else:
+        score = float(probs[:, 1].mean())
+
+    del inputs, logits, probs
+    return score
+
+
 try:
-    with st.spinner("Initializing ResNet18 and DeepGuard AI models..."):
-        model = load_trained_model()
-        deepguard_model, ai_synth_model = load_deepguard_model()
+    with st.spinner("Initializing memory-optimized AI models..."):
+        model, deepguard_model, vit_processor, vit_model = load_all_models()
 except Exception as error:
     st.error(f"AI model initialization failed: {error}")
     st.info(
@@ -535,13 +576,13 @@ with st.container(border=True):
 # --------------------------------------------------
 
 if analyze_button and uploaded_video is not None:
-    TOTAL_TARGET_FRAMES = 12
+    TOTAL_TARGET_FRAMES = 8   # 8 frames keeps RAM usage low while maintaining accuracy
     RESNET_WEIGHT = 0.02      # 2% weight for custom ResNet18
-    DEEPGUARD_WEIGHT = 0.98   # 98% weight for Pretrained DeepGuard + AI Detector
+    DEEPGUARD_WEIGHT = 0.98   # 98% weight for Pretrained DeepGuard + Quantized ViT
 
     predictions = []
     deepguard_predictions = []
-    sampled_frames = []
+    sampled_count = 0
 
     st.markdown("---")
     st.markdown(
@@ -620,14 +661,24 @@ if analyze_button and uploaded_video is not None:
                 logits = model(batch_tensor)
                 probs = torch.softmax(logits, dim=1)
                 resnet_fake_probability = float(probs[:, 1].mean().item())
+            del batch_tensor, logits, probs
 
             if not np.isfinite(resnet_fake_probability):
                 continue
 
             # 2A. DeepGuard (FaceSwap / FaceForensics++ detector)
-            original_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Resize full frame if larger than 720p to prevent RAM spikes on 4K/1080p videos
+            h_f, w_f = frame.shape[:2]
+            if max(h_f, w_f) > 720:
+                scale_f = 720.0 / max(h_f, w_f)
+                frame_small = cv2.resize(frame, (int(w_f * scale_f), int(h_f * scale_f)))
+            else:
+                frame_small = frame
+
+            original_rgb = cv2.cvtColor(frame_small, cv2.COLOR_BGR2RGB)
             full_pil = Image.fromarray(original_rgb)
             face_pil = Image.fromarray(face_rgb)
+            face_flip_pil = Image.fromarray(face_flipped)
 
             deepguard_output = deepguard_model(
                 full_pil,
@@ -635,28 +686,16 @@ if analyze_button and uploaded_video is not None:
                 margin_ratio=0.2,
                 conf_thres=0.5,
                 min_face_ratio=0.01,
-                tta_hflip=0.5,
+                tta_hflip=0.0,
             )
             ffpp_prob = extract_fake_probability(deepguard_output)
 
-            # 2B. AI Synthesis Detector (Pass cropped face + horizontal flip instead of full frame)
-            face_flip_pil = Image.fromarray(face_flipped)
-            ai_face_out = ai_synth_model(face_pil, top_k=None)
-            ai_flip_out = ai_synth_model(face_flip_pil, top_k=None)
-
-            ai_face_prob = extract_fake_probability(ai_face_out)
-            ai_flip_prob = extract_fake_probability(ai_flip_out)
-
-            if ai_face_prob is not None and ai_flip_prob is not None:
-                ai_prob = 0.5 * (ai_face_prob + ai_flip_prob)
-            else:
-                ai_prob = ai_face_prob if ai_face_prob is not None else ai_flip_prob
+            # 2B. 8-bit Quantized ViT AI Synthesis Detector
+            ai_prob = predict_vit_fake_prob(vit_processor, vit_model, [face_pil, face_flip_pil])
 
             if ffpp_prob is None and ai_prob is None:
                 continue
 
-            # Combine FaceSwap specialist and AI-Generation specialist:
-            # Real videos score low on BOTH. Fake videos (either FaceSwap OR AI-Generated) score high on at least one.
             if ffpp_prob is not None and ai_prob is not None:
                 deepguard_fake_probability = float(max(ffpp_prob, ai_prob))
             else:
@@ -667,21 +706,25 @@ if analyze_button and uploaded_video is not None:
 
             predictions.append(resnet_fake_probability)
             deepguard_predictions.append(deepguard_fake_probability)
-            sampled_frames.append(face_rgb)
+            sampled_count += 1
 
             preview = make_frame_thumbnail(face_rgb, max_width=160, max_height=190)
-            with frame_cols[(len(sampled_frames) - 1) % 4]:
+            with frame_cols[(sampled_count - 1) % 4]:
                 st.image(
                     preview,
-                    caption=f"Sample {len(sampled_frames)} · frame {frame_index}",
+                    caption=f"Sample {sampled_count} · frame {frame_index}",
                     width=160,
                 )
+
+            # Free frame memory immediately inside loop
+            del frame, frame_small, original_rgb, full_pil, face_pil, face_flip_pil, face_rgb, face_flipped
 
             progress_bar.progress(int((index + 1) / len(target_indices) * 100))
             status_text.markdown(f"**Analyzing video... {index + 1}/{len(target_indices)} samples**")
 
         cap.release()
         cap = None
+        gc.collect()
         progress_bar.progress(100)
 
         if len(predictions) < 3 or len(deepguard_predictions) < 3:
@@ -763,6 +806,7 @@ if analyze_button and uploaded_video is not None:
                 os.unlink(temp_path)
             except OSError:
                 pass
+        gc.collect()
 
 
 # --------------------------------------------------

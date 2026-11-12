@@ -1,8 +1,0 @@
-# Install in the existing project venv; do not reinstall OpenCV/PyTorch here.
-# These packages enable the Hugging Face DeepGuard B0 model.
-transformers>=4.51,<5
-timm>=1.0
-safetensors>=0.4
-huggingface_hub>=0.30
-einops>=0.8
-Pillow>=10
