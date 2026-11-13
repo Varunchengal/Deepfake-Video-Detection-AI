@@ -540,6 +540,7 @@ with st.container(border=True):
 
 if analyze_button and uploaded_video is not None:
     TOTAL_TARGET_FRAMES = 8
+    MAX_FALLBACK_FRAMES = 24  # Searches deeper if faces are hidden in initial frames
     RESNET_WEIGHT = 0.02      # 2% weight for custom ResNet18
     DEEPGUARD_WEIGHT = 0.98   # 98% weight for Pretrained ViT Deepfake Engine
 
@@ -588,19 +589,27 @@ if analyze_button and uploaded_video is not None:
         info_col1, info_col2, info_col3 = st.columns(3)
         info_col1.metric("Duration", f"{duration:.1f} sec" if duration else "N/A")
         info_col2.metric("FPS", f"{fps:.1f}" if fps > 0 else "N/A")
-        info_col3.metric("Target Frames", TOTAL_TARGET_FRAMES)
+        info_col3.metric("Target Samples", TOTAL_TARGET_FRAMES)
 
         if frame_count_total <= 0:
             raise RuntimeError("Could not determine the video's frame count.")
 
-        if frame_count_total <= TOTAL_TARGET_FRAMES:
-            target_indices = list(range(frame_count_total))
+        # Primary uniform indices + fallback indices if faces are sparse
+        if frame_count_total <= MAX_FALLBACK_FRAMES:
+            candidate_indices = list(range(frame_count_total))
         else:
-            target_indices = np.linspace(
+            primary = np.linspace(
                 0, frame_count_total - 1, TOTAL_TARGET_FRAMES + 2, dtype=int
             )[1:-1].tolist()
+            secondary = np.linspace(
+                0, frame_count_total - 1, MAX_FALLBACK_FRAMES + 2, dtype=int
+            )[1:-1].tolist()
+            candidate_indices = list(dict.fromkeys(primary + secondary))
 
-        for index, frame_index in enumerate(target_indices):
+        for index, frame_index in enumerate(candidate_indices):
+            if sampled_count >= TOTAL_TARGET_FRAMES:
+                break
+
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
             ret, frame = cap.read()
             if not ret or frame is None:
@@ -608,6 +617,7 @@ if analyze_button and uploaded_video is not None:
 
             face_rgb = extract_face_region(frame, padding=0.12)
             if face_rgb is None or not isinstance(face_rgb, np.ndarray) or face_rgb.size == 0:
+                del frame
                 continue
 
             if face_rgb.ndim == 2:
@@ -615,6 +625,7 @@ if analyze_button and uploaded_video is not None:
             elif face_rgb.ndim == 3 and face_rgb.shape[2] == 4:
                 face_rgb = cv2.cvtColor(face_rgb, cv2.COLOR_RGBA2RGB)
             elif face_rgb.ndim != 3 or face_rgb.shape[2] != 3:
+                del frame, face_rgb
                 continue
 
             # 1. User's ResNet18 with TTA
@@ -627,6 +638,7 @@ if analyze_button and uploaded_video is not None:
             del batch_tensor, logits, probs
 
             if not np.isfinite(resnet_fake_probability):
+                del frame, face_rgb, face_flipped
                 continue
 
             # 2. 8-bit Quantized ViT Deepfake & AI Synthesis Detector (Multi-Scale Crop + Flip)
@@ -640,6 +652,7 @@ if analyze_button and uploaded_video is not None:
             )
 
             if not np.isfinite(deepguard_fake_probability):
+                del frame, pil_list, face_rgb, face_flipped, face_tight
                 continue
 
             predictions.append(resnet_fake_probability)
@@ -656,19 +669,18 @@ if analyze_button and uploaded_video is not None:
 
             del frame, pil_list, face_rgb, face_flipped, face_tight
 
-            progress_bar.progress(int((index + 1) / len(target_indices) * 100))
-            status_text.markdown(f"**Analyzing video... {index + 1}/{len(target_indices)} samples**")
+            progress_bar.progress(min(100, int((sampled_count / TOTAL_TARGET_FRAMES) * 100)))
+            status_text.markdown(f"**Analyzing video... {sampled_count}/{TOTAL_TARGET_FRAMES} face samples found**")
 
         cap.release()
         cap = None
         gc.collect()
         progress_bar.progress(100)
 
-        if len(predictions) < 3 or len(deepguard_predictions) < 3:
+        if len(predictions) < 1 or len(deepguard_predictions) < 1:
             st.warning(
-                f"Usable ResNet18 samples: {len(predictions)}; "
-                f"DeepGuard samples: {len(deepguard_predictions)}. "
-                "At least 3 valid samples from both models are required."
+                "No clear human face could be detected in this video. "
+                "Please upload a video with a visible face."
             )
         else:
             status_text.success("Analysis completed.")
