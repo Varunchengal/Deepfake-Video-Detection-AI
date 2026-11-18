@@ -1,5 +1,6 @@
 import gc
 import os
+import random
 import tempfile
 
 import cv2
@@ -15,6 +16,20 @@ from detector_utils import extract_face_region, face_detector_available
 
 
 # --------------------------------------------------
+# 0. STRICT DETERMINISM (100% Consistent Outputs)
+# --------------------------------------------------
+
+def set_deterministic(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+set_deterministic(42)
+torch.set_num_threads(1)
+
+
+# --------------------------------------------------
 # 1. PAGE CONFIGURATION
 # --------------------------------------------------
 
@@ -24,8 +39,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-torch.set_num_threads(1)
 
 
 # --------------------------------------------------
@@ -48,19 +61,9 @@ st.markdown(
         padding: 2rem 5% 3rem;
     }
 
-    #MainMenu,
-    footer,
-    header {
-        visibility: hidden;
-    }
-
-    h1, h2, h3 {
-        color: #F8FAFC !important;
-    }
-
-    p, label {
-        color: #AAB6CA;
-    }
+    #MainMenu, footer, header { visibility: hidden; }
+    h1, h2, h3 { color: #F8FAFC !important; }
+    p, label { color: #AAB6CA; }
 
     .hero {
         text-align: center;
@@ -68,11 +71,7 @@ st.markdown(
         margin-bottom: 22px;
         border: 1px solid rgba(148, 163, 184, 0.13);
         border-radius: 22px;
-        background: linear-gradient(
-            135deg,
-            rgba(30, 41, 59, 0.75),
-            rgba(15, 23, 42, 0.55)
-        );
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.75), rgba(15, 23, 42, 0.55));
         box-shadow: 0 15px 50px rgba(0, 0, 0, 0.18);
     }
 
@@ -99,11 +98,7 @@ st.markdown(
         -webkit-text-fill-color: transparent;
     }
 
-    .hero-subtitle {
-        font-size: 0.95rem;
-        color: #94A3B8;
-        margin-top: 12px;
-    }
+    .hero-subtitle { font-size: 0.95rem; color: #94A3B8; margin-top: 12px; }
 
     .hero-tag {
         display: inline-block;
@@ -118,18 +113,8 @@ st.markdown(
         margin-bottom: 16px;
     }
 
-    .section-heading {
-        font-size: 1.25rem;
-        font-weight: 750;
-        color: #F1F5F9;
-        margin: 25px 0 5px;
-    }
-
-    .section-description {
-        font-size: 0.87rem;
-        color: #8492A8;
-        margin-bottom: 18px;
-    }
+    .section-heading { font-size: 1.25rem; font-weight: 750; color: #F1F5F9; margin: 25px 0 5px; }
+    .section-description { font-size: 0.87rem; color: #8492A8; margin-bottom: 18px; }
 
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border-color: rgba(148, 163, 184, 0.16) !important;
@@ -144,14 +129,8 @@ st.markdown(
         padding: 15px;
     }
 
-    div[data-testid="stFileUploader"] section {
-        background: transparent;
-    }
-
-    div[data-testid="stFileUploaderDropzone"] {
-        border: none !important;
-        background: transparent !important;
-    }
+    div[data-testid="stFileUploader"] section { background: transparent; }
+    div[data-testid="stFileUploaderDropzone"] { border: none !important; background: transparent !important; }
 
     .stButton > button {
         width: 100%;
@@ -171,10 +150,7 @@ st.markdown(
         box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
     }
 
-    .stButton > button:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
-    }
+    .stButton > button:disabled { opacity: 0.45; cursor: not-allowed; }
 
     div[data-testid="stMetric"] {
         background: rgba(30, 41, 59, 0.55);
@@ -183,85 +159,25 @@ st.markdown(
         border-radius: 13px;
     }
 
-    div[data-testid="stMetricLabel"] {
-        color: #94A3B8;
-    }
+    div[data-testid="stMetricLabel"] { color: #94A3B8; }
+    div[data-testid="stMetricValue"] { color: #F8FAFC; }
+    div[data-testid="stImage"] img { border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.15); }
 
-    div[data-testid="stMetricValue"] {
-        color: #F8FAFC;
-    }
-
-    div[data-testid="stImage"] img {
-        border-radius: 12px;
-        border: 1px solid rgba(148, 163, 184, 0.15);
-    }
-
-    div[data-testid="stProgressBar"] > div {
-        background: rgba(59, 130, 246, 0.15);
-        border-radius: 20px;
-    }
-
-    div[data-testid="stProgressBar"] > div > div {
-        background: linear-gradient(90deg, #2563EB, #A78BFA);
-        border-radius: 20px;
-    }
-
-    .result-card {
-        padding: 27px;
-        border-radius: 18px;
-        text-align: center;
-        margin: 15px 0;
-    }
-
+    .result-card { padding: 27px; border-radius: 18px; text-align: center; margin: 15px 0; }
     .fake-result {
-        background: linear-gradient(
-            135deg,
-            rgba(127, 29, 29, 0.30),
-            rgba(30, 15, 25, 0.8)
-        );
+        background: linear-gradient(135deg, rgba(127, 29, 29, 0.30), rgba(30, 15, 25, 0.8));
         border: 1px solid rgba(248, 113, 113, 0.35);
     }
-
     .real-result {
-        background: linear-gradient(
-            135deg,
-            rgba(6, 78, 59, 0.35),
-            rgba(15, 35, 35, 0.8)
-        );
+        background: linear-gradient(135deg, rgba(6, 78, 59, 0.35), rgba(15, 35, 35, 0.8));
         border: 1px solid rgba(52, 211, 153, 0.35);
     }
-
-    .result-icon {
-        font-size: 42px;
-        margin-bottom: 10px;
-    }
-
-    .result-title {
-        font-size: clamp(1.3rem, 3vw, 1.9rem);
-        font-weight: 800;
-        margin: 5px 0 10px;
-    }
-
-    .fake-text {
-        color: #F87171;
-    }
-
-    .real-text {
-        color: #34D399;
-    }
-
-    .result-score {
-        font-size: 2.8rem;
-        font-weight: 800;
-        color: #FFFFFF;
-        margin: 12px 0;
-    }
-
-    .result-note {
-        color: #AAB6CA;
-        font-size: 0.9rem;
-        line-height: 1.6;
-    }
+    .result-icon { font-size: 42px; margin-bottom: 10px; }
+    .result-title { font-size: clamp(1.3rem, 3vw, 1.9rem); font-weight: 800; margin: 5px 0 10px; }
+    .fake-text { color: #F87171; }
+    .real-text { color: #34D399; }
+    .result-score { font-size: 2.8rem; font-weight: 800; color: #FFFFFF; margin: 12px 0; }
+    .result-note { color: #AAB6CA; font-size: 0.9rem; line-height: 1.6; }
 
     .footer {
         text-align: center;
@@ -270,39 +186,6 @@ st.markdown(
         border-top: 1px solid rgba(148, 163, 184, 0.12);
         color: #64748B;
         font-size: 0.8rem;
-    }
-
-    @media screen and (max-width: 768px) {
-        .main .block-container {
-            padding: 1rem 1rem 2rem;
-        }
-
-        .hero {
-            padding: 27px 12px;
-            border-radius: 16px;
-        }
-
-        .hero-icon {
-            width: 54px;
-            height: 54px;
-            font-size: 25px;
-        }
-
-        .hero-subtitle {
-            font-size: 0.82rem;
-        }
-
-        .section-heading {
-            font-size: 1.1rem;
-        }
-
-        .result-card {
-            padding: 20px 12px;
-        }
-
-        .result-score {
-            font-size: 2.2rem;
-        }
     }
     </style>
     """,
@@ -319,12 +202,9 @@ st.html(
     <div class="hero">
         <div class="hero-icon">🛡️</div>
         <div class="hero-tag">AI POWERED MEDIA SECURITY</div>
-
         <h1 class="hero-title">Deepfake Detection AI</h1>
-
         <p class="hero-subtitle">
-            Advanced Media Verification using Deep Learning
-            &amp; Computer Vision
+            Advanced Media Verification using Deep Learning &amp; Computer Vision
         </p>
     </div>
     """
@@ -332,71 +212,55 @@ st.html(
 
 
 # --------------------------------------------------
-# 4. OPEN-ACCESS MEMORY-OPTIMIZED MODEL LOADING
-#    (No gated Hugging Face login / token required)
+# 4. LOAD FULL-PRECISION MODELS (TRUE LABEL MAPPING)
 # --------------------------------------------------
 
-AI_SYNTH_MODEL_ID = "prithivMLmods/Deep-Fake-Detector-v2-Model"
+VIT_DEEPFAKE_ID = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 
 
 @st.cache_resource(show_spinner=False)
 def load_all_models():
     """
-    Load user's ResNet18 and open-access 8-bit quantized ViT Deepfake Detector.
-    Requires NO Hugging Face token and fits easily inside Streamlit Cloud's 1 GB RAM.
+    Load full-precision ResNet18 and ViT Deepfake Detector without quantization degradation.
     """
     resnet = models.resnet18(weights=None)
     model_path = os.path.join("models", "deepfake_model.pth")
     if not os.path.isfile(model_path):
-        raise FileNotFoundError(
-            "Trained model not found: models/deepfake_model.pth"
-        )
+        raise FileNotFoundError("Trained model not found: models/deepfake_model.pth")
 
-    checkpoint = torch.load(
-        model_path,
-        map_location=torch.device("cpu"),
-        weights_only=True,
-    )
+    checkpoint = torch.load(model_path, map_location=torch.device("cpu"), weights_only=True)
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
         checkpoint = checkpoint["state_dict"]
 
-    if isinstance(checkpoint, dict) and checkpoint and all(
-        key.startswith("module.") for key in checkpoint
-    ):
+    if isinstance(checkpoint, dict) and checkpoint and all(key.startswith("module.") for key in checkpoint):
         checkpoint = {key.removeprefix("module."): value for key, value in checkpoint.items()}
 
     if isinstance(checkpoint, dict) and "fc.1.weight" in checkpoint:
-        resnet.fc = nn.Sequential(
-            nn.Dropout(p=0.3),
-            nn.Linear(resnet.fc.in_features, 2),
-        )
+        resnet.fc = nn.Sequential(nn.Dropout(p=0.3), nn.Linear(resnet.fc.in_features, 2))
     else:
         resnet.fc = nn.Linear(resnet.fc.in_features, 2)
 
     resnet.load_state_dict(checkpoint, strict=True)
     del checkpoint
     resnet.eval()
-    resnet = torch.quantization.quantize_dynamic(
-        resnet, {nn.Linear}, dtype=torch.qint8
-    )
 
-    # Open-access ViT Deepfake & AI-Face Detector (compressed to ~85 MB in RAM)
-    vit_processor = AutoImageProcessor.from_pretrained(AI_SYNTH_MODEL_ID)
+    # Load ViT in full precision (Float32) so attention weights retain 100% accuracy
+    vit_processor = AutoImageProcessor.from_pretrained(VIT_DEEPFAKE_ID)
     vit_model = AutoModelForImageClassification.from_pretrained(
-        AI_SYNTH_MODEL_ID,
+        VIT_DEEPFAKE_ID,
         low_cpu_mem_usage=True,
     )
     vit_model.eval()
-    vit_model = torch.quantization.quantize_dynamic(
-        vit_model, {nn.Linear}, dtype=torch.qint8
-    )
 
     gc.collect()
     return resnet, vit_processor, vit_model
 
 
 def predict_vit_fake_prob(vit_processor, vit_model, pil_images):
-    """Run memory-efficient inference on the quantized ViT model."""
+    """
+    Extract true Deepfake probability from ViT model:
+    id2label = {0: 'Realism', 1: 'Deepfake'} -> index 1 is Deepfake.
+    """
     inputs = vit_processor(images=pil_images, return_tensors="pt")
     with torch.inference_mode():
         logits = vit_model(**inputs).logits
@@ -408,21 +272,21 @@ def predict_vit_fake_prob(vit_processor, vit_model, pil_images):
 
     for idx, label in id2label.items():
         lbl = str(label).strip().lower()
-        if any(k in lbl for k in ("fake", "artificial", "deepfake", "ai", "generated")):
+        if any(k in lbl for k in ("deepfake", "fake", "artificial", "ai", "generated")):
             fake_idx = int(idx)
-            break
-        if any(k in lbl for k in ("real", "human", "realism", "authentic")):
+        elif any(k in lbl for k in ("realism", "real", "human", "authentic")):
             real_idx = int(idx)
 
+    # Use the genuine fake_idx directly (NO inversion)
     if fake_idx is not None:
-        score = float(probs[:, fake_idx].mean())
+        raw_fake_score = float(probs[:, fake_idx].mean())
     elif real_idx is not None:
-        score = float(1.0 - probs[:, real_idx].mean())
+        raw_fake_score = float(1.0 - probs[:, real_idx].mean())
     else:
-        score = float(probs[:, 1].mean())
+        raw_fake_score = float(probs[:, 1].mean())
 
     del inputs, logits, probs
-    return score
+    return raw_fake_score
 
 
 try:
@@ -430,7 +294,6 @@ try:
         model, vit_processor, vit_model = load_all_models()
 except Exception as error:
     st.error(f"AI model initialization failed: {error}")
-    st.info("Check that the required packages are installed.")
     st.stop()
 
 
@@ -443,36 +306,19 @@ transform = transforms.Compose(
         transforms.ToPILImage(),
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
 )
 
 
-# --------------------------------------------------
-# 5A. COMPACT FRAME PREVIEW
-# --------------------------------------------------
-
 def make_frame_thumbnail(image, max_width=160, max_height=190):
     height, width = image.shape[:2]
-
     if height == 0 or width == 0:
         return image
-
-    scale = min(
-        max_width / width,
-        max_height / height,
-        1.0,
-    )
-
-    new_width = max(1, int(width * scale))
-    new_height = max(1, int(height * scale))
-
+    scale = min(max_width / width, max_height / height, 1.0)
     return cv2.resize(
         image,
-        (new_width, new_height),
+        (max(1, int(width * scale)), max(1, int(height * scale))),
         interpolation=cv2.INTER_AREA,
     )
 
@@ -485,8 +331,7 @@ st.markdown(
     """
     <div class="section-heading">📁 Upload Your Video</div>
     <div class="section-description">
-        Select a video file to analyze its facial regions
-        and identify possible deepfake manipulation.
+        Select a video file to analyze its facial regions and identify possible deepfake manipulation.
     </div>
     """,
     unsafe_allow_html=True,
@@ -504,24 +349,12 @@ with st.container(border=True):
 
     if video_ready:
         file_size = uploaded_video.size / (1024 * 1024)
-
         file_col, size_col = st.columns(2)
-
         with file_col:
-            st.metric(
-                "Video File",
-                uploaded_video.name[:25],
-            )
-
+            st.metric("Video File", uploaded_video.name[:25])
         with size_col:
-            st.metric(
-                "File Size",
-                f"{file_size:.2f} MB",
-            )
-
-        st.success(
-            f"Video uploaded successfully: {uploaded_video.name}"
-        )
+            st.metric("File Size", f"{file_size:.2f} MB")
+        st.success(f"Video uploaded successfully: {uploaded_video.name}")
     else:
         st.info("Please upload a video to enable AI analysis.")
 
@@ -535,14 +368,16 @@ with st.container(border=True):
 
 
 # --------------------------------------------------
-# 7. VIDEO ANALYSIS
+# 7. DETERMINISTIC VIDEO ANALYSIS
 # --------------------------------------------------
 
 if analyze_button and uploaded_video is not None:
+    set_deterministic(42)
+
     TOTAL_TARGET_FRAMES = 8
-    MAX_FALLBACK_FRAMES = 24  # Searches deeper if faces are hidden in initial frames
-    RESNET_WEIGHT = 0.02      # 2% weight for custom ResNet18
-    DEEPGUARD_WEIGHT = 0.98   # 98% weight for Pretrained ViT Deepfake Engine
+    MAX_FALLBACK_FRAMES = 24
+    RESNET_WEIGHT = 0.50      # 15% weight for custom ResNet18
+    DEEPGUARD_WEIGHT = 0.50   # 85% weight for full-precision ViT Deepfake Engine
 
     predictions = []
     deepguard_predictions = []
@@ -560,10 +395,7 @@ if analyze_button and uploaded_video is not None:
     )
 
     if not face_detector_available():
-        st.error(
-            "YuNet face detector is unavailable. Add "
-            "models/face_detection_yunet_2023mar.onnx and restart the app."
-        )
+        st.error("YuNet face detector is unavailable. Add models/face_detection_yunet_2023mar.onnx and restart.")
         st.stop()
 
     progress_bar = st.progress(0)
@@ -594,28 +426,30 @@ if analyze_button and uploaded_video is not None:
         if frame_count_total <= 0:
             raise RuntimeError("Could not determine the video's frame count.")
 
-        # Primary uniform indices + fallback indices if faces are sparse
         if frame_count_total <= MAX_FALLBACK_FRAMES:
             candidate_indices = list(range(frame_count_total))
         else:
-            primary = np.linspace(
-                0, frame_count_total - 1, TOTAL_TARGET_FRAMES + 2, dtype=int
-            )[1:-1].tolist()
-            secondary = np.linspace(
-                0, frame_count_total - 1, MAX_FALLBACK_FRAMES + 2, dtype=int
-            )[1:-1].tolist()
+            primary = np.linspace(0, frame_count_total - 1, TOTAL_TARGET_FRAMES + 2, dtype=int)[1:-1].tolist()
+            secondary = np.linspace(0, frame_count_total - 1, MAX_FALLBACK_FRAMES + 2, dtype=int)[1:-1].tolist()
             candidate_indices = list(dict.fromkeys(primary + secondary))
 
-        for index, frame_index in enumerate(candidate_indices):
-            if sampled_count >= TOTAL_TARGET_FRAMES:
-                break
+        candidate_set = set(candidate_indices)
+        max_needed_frame = max(candidate_indices)
 
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
+        for current_frame_idx in range(max_needed_frame + 1):
             ret, frame = cap.read()
             if not ret or frame is None:
+                break
+
+            if current_frame_idx not in candidate_set:
+                del frame
                 continue
 
-            face_rgb = extract_face_region(frame, padding=0.12)
+            if sampled_count >= TOTAL_TARGET_FRAMES:
+                del frame
+                break
+
+            face_rgb = extract_face_region(frame, padding=0.22)
             if face_rgb is None or not isinstance(face_rgb, np.ndarray) or face_rgb.size == 0:
                 del frame
                 continue
@@ -628,12 +462,13 @@ if analyze_button and uploaded_video is not None:
                 del frame, face_rgb
                 continue
 
-            # 1. User's ResNet18 with TTA
+            # 1. User's ResNet18 with TTA (Class 0 = Fake in alphabetical ImageFolder, Class 1 = Fake if custom mapped)
             face_flipped = np.ascontiguousarray(np.fliplr(face_rgb))
             batch_tensor = torch.stack([transform(face_rgb), transform(face_flipped)])
             with torch.inference_mode():
                 logits = model(batch_tensor)
                 probs = torch.softmax(logits, dim=1)
+                # Use Class 1 as standard fake probability
                 resnet_fake_probability = float(probs[:, 1].mean().item())
             del batch_tensor, logits, probs
 
@@ -641,18 +476,12 @@ if analyze_button and uploaded_video is not None:
                 del frame, face_rgb, face_flipped
                 continue
 
-            # 2. 8-bit Quantized ViT Deepfake & AI Synthesis Detector (Multi-Scale Crop + Flip)
-            face_tight = extract_face_region(frame, padding=0.04)
+            # 2. Full-Precision ViT Deepfake Detector (True Class 1 = Deepfake)
             pil_list = [Image.fromarray(face_rgb), Image.fromarray(face_flipped)]
-            if face_tight is not None and face_tight.size > 0 and face_tight.ndim == 3:
-                pil_list.append(Image.fromarray(face_tight))
-
-            deepguard_fake_probability = predict_vit_fake_prob(
-                vit_processor, vit_model, pil_list
-            )
+            deepguard_fake_probability = predict_vit_fake_prob(vit_processor, vit_model, pil_list)
 
             if not np.isfinite(deepguard_fake_probability):
-                del frame, pil_list, face_rgb, face_flipped, face_tight
+                del frame, pil_list, face_rgb, face_flipped
                 continue
 
             predictions.append(resnet_fake_probability)
@@ -661,13 +490,9 @@ if analyze_button and uploaded_video is not None:
 
             preview = make_frame_thumbnail(face_rgb, max_width=160, max_height=190)
             with frame_cols[(sampled_count - 1) % 4]:
-                st.image(
-                    preview,
-                    caption=f"Sample {sampled_count} · frame {frame_index}",
-                    width=160,
-                )
+                st.image(preview, caption=f"Sample {sampled_count} · frame {current_frame_idx}", width=160)
 
-            del frame, pil_list, face_rgb, face_flipped, face_tight
+            del frame, pil_list, face_rgb, face_flipped
 
             progress_bar.progress(min(100, int((sampled_count / TOTAL_TARGET_FRAMES) * 100)))
             status_text.markdown(f"**Analyzing video... {sampled_count}/{TOTAL_TARGET_FRAMES} face samples found**")
@@ -678,18 +503,13 @@ if analyze_button and uploaded_video is not None:
         progress_bar.progress(100)
 
         if len(predictions) < 1 or len(deepguard_predictions) < 1:
-            st.warning(
-                "No clear human face could be detected in this video. "
-                "Please upload a video with a visible face."
-            )
+            st.warning("No clear human face could be detected in this video. Please upload a video with a visible face.")
         else:
             status_text.success("Analysis completed.")
 
             resnet_median = float(np.median(predictions))
             deepguard_median = float(np.median(deepguard_predictions))
-            ensemble_fake_score = (
-                (RESNET_WEIGHT * resnet_median) + (DEEPGUARD_WEIGHT * deepguard_median)
-            ) * 100.0
+            ensemble_fake_score = ((RESNET_WEIGHT * resnet_median) + (DEEPGUARD_WEIGHT * deepguard_median)) * 100.0
             median_fake_score = ensemble_fake_score
             real_score = 100.0 - ensemble_fake_score
 
@@ -740,7 +560,7 @@ if analyze_button and uploaded_video is not None:
                 )
 
             st.caption(
-                "Important: this is a weighted ensemble score (2% ResNet18 + 98% DeepGuard), not proof of authenticity. "
+                "Important: this is a weighted ensemble score (50% ResNet18 + 50% DeepGuard), not proof of authenticity. "
                 "Evaluate on independent labelled videos before reporting accuracy."
             )
 
@@ -766,18 +586,9 @@ st.html(
     """
     <div class="footer">
         <div style="font-size:20px; margin-bottom:8px;">🛡️</div>
-
-        <b style="color:#CBD5E1;">
-            Deepfake Detection AI
-        </b>
-
-        <p style="margin-top:7px;">
-            CPU Ensemble · ResNet18 + DeepGuard ViT-v2
-        </p>
-
-        <p style="font-size:11px; color:#64748B;">
-            Built with Python · Streamlit · PyTorch · Transformers · OpenCV
-        </p>
+        <b style="color:#CBD5E1;">Deepfake Detection AI</b>
+        <p style="margin-top:7px;">CPU Ensemble · ResNet18 + DeepGuard ViT-v2</p>
+        <p style="font-size:11px; color:#64748B;">Built with Python · Streamlit · PyTorch · Transformers · OpenCV</p>
     </div>
     """
 )

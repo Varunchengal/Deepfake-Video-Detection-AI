@@ -1,5 +1,5 @@
 # train_model.py
-# Improved CPU-friendly ResNet18 fine-tuning for Higher Deepfake Accuracy
+# CPU-friendly ResNet18 fine-tuning for deepfake face classification
 
 import copy
 import os
@@ -22,11 +22,11 @@ MODEL_DIR = "models"
 MODEL_PATH = os.path.join(MODEL_DIR, "deepfake_model.pth")
 
 MAX_EPOCHS = 20
-BATCH_SIZE = 16  # 8-ൽ നിന്ന് 16 ആക്കി (BatchNorm സ്ഥിരതയ്ക്ക്)
+BATCH_SIZE = 16  # Increased from 8 to 16 for BatchNorm stability
 EARLY_STOPPING_PATIENCE = 6
 NUM_WORKERS = 0
 
-FEATURES_LR = 0.0001    # Layer3 + Layer4 നന്നായി പഠിക്കാൻ LR കൂട്ടി
+FEATURES_LR = 0.0001    # Learning rate for fine-tuning layer3 and layer4
 CLASSIFIER_LR = 0.0005
 WEIGHT_DECAY = 0.001
 
@@ -127,14 +127,14 @@ model = models.resnet18(weights=weights)
 for param in model.parameters():
     param.requires_grad = False
 
-# Layer3 + Layer4 unfreeze ചെയ്യുന്നു (Deepfake texture പഠിക്കാൻ Layer3 നിർബന്ധമാണ്)
+# Unfreeze layer3 and layer4 to learn subtle deepfake texture features
 for param in model.layer3.parameters():
     param.requires_grad = True
 
 for param in model.layer4.parameters():
     param.requires_grad = True
 
-# Overfitting തടയാൻ Dropout ചേർത്തു
+# Add dropout to prevent overfitting
 model.fc = nn.Sequential(
     nn.Dropout(p=0.3),
     nn.Linear(model.fc.in_features, 2)
@@ -142,7 +142,7 @@ model.fc = nn.Sequential(
 model = model.to(DEVICE)
 
 def set_frozen_layers_eval(m):
-    """Freeze ചെയ്ത ലെയറുകളിലെ BatchNorm stats മാറാതിരിക്കാൻ"""
+    """Keep BatchNorm statistics fixed for frozen layers."""
     m.conv1.eval()
     m.bn1.eval()
     m.layer1.eval()
@@ -159,7 +159,7 @@ class_weights = torch.tensor(
     device=DEVICE,
 )
 
-# Label smoothing മോഡലിന്റെ overconfidence കുറയ്ക്കും
+# Label smoothing reduces model overconfidence
 criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
 
 optimizer = optim.AdamW(
@@ -190,7 +190,7 @@ for epoch in range(MAX_EPOCHS):
     for phase in ["train", "val"]:
         if phase == "train":
             model.train()
-            set_frozen_layers_eval(model)  # Frozen BatchNorm സംരക്ഷിക്കുന്നു
+            set_frozen_layers_eval(model)  # Preserve frozen BatchNorm layers
         else:
             model.eval()
 
@@ -218,7 +218,7 @@ for epoch in range(MAX_EPOCHS):
         print(f"{phase.upper():5s} | Loss: {epoch_loss:.4f} | Acc: {epoch_acc * 100:.2f}%")
 
         if phase == "val":
-            # Accuracy കൂടിയാലോ അല്ലെങ്കിൽ ഇതേ Accuracy-ൽ Loss കുറഞ്ഞാലോ സേവ് ചെയ്യും
+            # Save model if validation accuracy improves or loss decreases at same accuracy
             if (epoch_acc > best_val_accuracy) or (
                 epoch_acc == best_val_accuracy and epoch_loss < best_val_loss
             ):
